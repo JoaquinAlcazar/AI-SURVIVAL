@@ -8,7 +8,8 @@ public enum state
     Damaged,
     Patrol,
     Chase,
-    Flee
+    Flee,
+    Death
 }
 
 public class EnemyBehavior : MonoBehaviour
@@ -27,7 +28,11 @@ public class EnemyBehavior : MonoBehaviour
     public Transform patrolB;
     public Transform currentTarget;
 
-    public int followStateTimer;
+    public int followStateTimer = 5;
+    public int fleeStateTimer = 5;
+
+    private Coroutine currentCoroutine;
+
     void Start()
     {
         currentTarget = patrolA.transform;
@@ -38,33 +43,57 @@ public class EnemyBehavior : MonoBehaviour
         agent.destination = currentTarget.position;
     }
 
-
     void Update()
     {
-        if (state == state.Chase)
+        switch (state)
         {
-            ChaseBehavior();
-        }
-        else if (state == state.Flee)
-        {
-            // Lógica para huir (si la agregas en el futuro)
-        }
-        else if (state == state.Patrol)
-        {
-            PatrolBehavior();
+            case state.Patrol:
+                PatrolBehavior();
+                break;
+
+            case state.Chase:
+                ChaseBehavior();
+                break;
+
+            case state.Flee:
+                FleeBehavior();
+                break;
+
+            case state.Death:
+                DeathBehavior();
+                return;
         }
 
-        // Si el jugador es visto y el enemigo no estaba ya en persecución, cambia a Chase
-        if (CanSeePlayer() && state != state.Chase)
+        if (CanSeePlayer())
         {
-            state = state.Chase;
-            currentTarget = player;
-            StartCoroutine(followTimer());  // Inicia la corutina cuando comienza la persecución
+            if (life <= 50 && state != state.Flee)
+            {
+                state = state.Flee;
+                RestartCoroutine(followTimer(fleeStateTimer, state.Patrol));
+            }
+            else if (state != state.Chase && state != state.Flee)
+            {
+                state = state.Chase;
+                currentTarget = player;
+                RestartCoroutine(followTimer(followStateTimer, state.Patrol));
+            }
         }
 
-        if (life <= 0) GameObject.Destroy(gameObject);
+
 
         if (Input.GetKeyDown(KeyCode.Space)) life -= 51;
+
+        if (life <= 0 && state != state.Death)
+        {
+            state = state.Death;
+        }
+
+        // Ejemplo para activar Flee manualmente (puedes usar otra condición)
+        if (Input.GetKeyDown(KeyCode.F))
+        {
+            state = state.Flee;
+            RestartCoroutine(followTimer(fleeStateTimer, state.Patrol));
+        }
     }
 
     public bool CanSeePlayer()
@@ -74,14 +103,11 @@ public class EnemyBehavior : MonoBehaviour
         Vector3 directionToPlayer = (player.position - transform.position).normalized;
         float distanceToPlayer = Vector3.Distance(transform.position, player.position);
 
-        // Comprobar si el jugador está dentro del rango de visión
         if (distanceToPlayer < visionRange)
         {
-            // Comprobar si el jugador está dentro del ángulo de visión
             float angleToPlayer = Vector3.Angle(transform.forward, directionToPlayer);
             if (angleToPlayer < visionAngle / 2)
             {
-                // Comprobar si hay obstáculos entre el enemigo y el jugador
                 if (!Physics.Raycast(transform.position, directionToPlayer, distanceToPlayer, obstacleMask))
                 {
                     return true;
@@ -97,6 +123,20 @@ public class EnemyBehavior : MonoBehaviour
         agent.destination = currentTarget.position;
     }
 
+    public void FleeBehavior()
+    {
+        if (player != null)
+        {
+            Vector3 directionAway = (transform.position - player.position).normalized;
+            Vector3 fleeTarget = transform.position + directionAway * 10f; // Puedes ajustar la distancia
+            NavMeshHit hit;
+            if (NavMesh.SamplePosition(fleeTarget, out hit, 10f, NavMesh.AllAreas))
+            {
+                agent.destination = hit.position;
+            }
+        }
+    }
+
     public void PatrolBehavior()
     {
         if (!agent.pathPending && agent.remainingDistance < 0.5f)
@@ -106,17 +146,29 @@ public class EnemyBehavior : MonoBehaviour
         }
     }
 
-    public IEnumerator followTimer()
+    public void DeathBehavior()
     {
-        yield return new WaitForSeconds(followStateTimer);
+        Destroy(gameObject);
+    }
 
-        // Solo regresa a patrulla si sigue en estado de Chase (por si cambia a otro estado en medio del tiempo)
-        if (state == state.Chase)
+    private void RestartCoroutine(IEnumerator routine)
+    {
+        if (currentCoroutine != null)
         {
-            state = state.Patrol;
-            currentTarget = patrolA; // O el punto más cercano de patrulla
+            StopCoroutine(currentCoroutine);
+        }
+        currentCoroutine = StartCoroutine(routine);
+    }
+
+    public IEnumerator followTimer(float duration, state returnState)
+    {
+        yield return new WaitForSeconds(duration);
+
+        if (state != state.Death)
+        {
+            state = returnState;
+            currentTarget = patrolA;
             agent.SetDestination(currentTarget.position);
         }
     }
-
 }
